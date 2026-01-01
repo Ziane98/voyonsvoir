@@ -1,8 +1,14 @@
 name: Auto merge PRs
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_run:
+    workflows: ["Security Checks"]
+    types: [completed]
+
+permissions:
+  checks: read
+  contents: write
+  pull-requests: write
 
 jobs:
   automerge:
@@ -11,15 +17,123 @@ jobs:
       - uses: actions/github-script@v7
         with:
           script: |
-            const pr = context.payload.pull_request
-            if (!pr.mergeable) {
-              console.log("PR not mergeable yet")
+            const { owner, repo } = context.repo
+            const run = context.payload.workflow_run
+
+            if (run.conclusion !== "success") {
+              console.log(`Security checks conclusion: ${run.conclusion}`)
               return
             }
 
-            await github.rest.pulls.merge({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              merge_method: "merge"
-            })
+            const prs = run.pull_requests || []
+            if (prs.length === 0) {
+              console.log("No PRs for this workflow run")
+              return
+            }
+
+            const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+            const requiredBaseChecks = ["gitleaks", "trivy", "clamav"]
+            const requiredSameRepoChecks = ["codeql", "gitleaks", "trivy", "clamav"]
+
+            async function getPr(number) {
+              return (await github.rest.pulls.get({ owner, repo, pull_number: number })).data
+            }
+
+            async function checksPassed(sha, requiredChecks) {
+              const { data } = await github.rest.checks.listForRef({
+                owner,
+                repo,
+                ref: sha,
+                per_page: 100
+              })
+
+              const latestByName = new Map()
+              for (const run of data.check_runs) {
+                if (!requiredChecks.includes(run.name)) continue
+                const existing = latestByName.get(run.name)
+                const existingTime = existing?.completed_at || existing?.started_at || ""
+                const runTime = run.completed_at || run.started_at || ""
+                if (!existing || runTime > existingTime) {
+                  latestByName.set(run.name, run)
+                }
+              }
+
+              const missing = requiredChecks.filter((name) => !latestByName.has(name))
+              if (missing.length > 0) {
+                console.log(`Missing checks: ${missing.join(", ")}`)
+                return false
+              }
+
+              const failed = requiredChecks
+                .map((name) => {
+                  const run = latestByName.get(name)
+                  return {
+                    name,
+                    status: run?.status,
+                    conclusion: run?.conclusion
+                  }
+                })
+                .filter((run) => run.status !== "completed" || run.conclusion !== "success")
+
+              if (failed.length > 0) {
+                console.log(
+                  `Checks not successful: ${failed
+                    .map((run) => `${run.name} (${run.status}/${run.conclusion})`)
+                    .join(", ")}`
+                )
+                return false
+              }
+
+              return true
+            }
+
+            async function waitForMergeable(number, attempts = 12, delayMs = 5000) {
+              let pr
+              for (let i = 0; i < attempts; i++) {
+                pr = await getPr(number)
+                if (pr.merged) {
+                  console.log(`PR #${number} already merged`)
+                  return pr
+                }
+                if (pr.mergeable === true && pr.mergeable_state === "clean") {
+                  return pr
+                }
+                console.log(`Waiting... mergeable=${pr.mergeable} state=${pr.mergeable_state}`)
+                await sleep(delayMs)
+              }
+              return pr
+            }
+
+            async function tryMerge(number) {
+              const pr = await waitForMergeable(number)
+              if (!pr || pr.merged) return
+              if (pr.mergeable !== true || pr.mergeable_state !== "clean") {
+                console.log(`PR #${number} not mergeable yet`)
+                return
+              }
+
+              const isFork = pr.head?.repo?.full_name !== `${owner}/${repo}`
+              const requiredChecks = isFork ? requiredBaseChecks : requiredSameRepoChecks
+              const ok = await checksPassed(pr.head.sha, requiredChecks)
+              if (!ok) return
+
+              try {
+                await github.rest.pulls.merge({
+                  owner,
+                  repo,
+                  pull_number: number,
+                  merge_method: "merge"
+                })
+                console.log(`Merged PR #${number}`)
+              } catch (error) {
+                if (error.status === 405 || error.status === 409) {
+                  console.log(`Merge skipped for PR #${number}: ${error.message}`)
+                  return
+                }
+                throw error
+              }
+            }
+
+            for (const pr of prs) {
+              await tryMerge(pr.number)
+            }
