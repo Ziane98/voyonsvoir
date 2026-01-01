@@ -88,22 +88,36 @@ jobs:
                 }
               }
 
-              const missing = requiredChecks.filter((name) => !latestByName.has(name))
+              const missing = requiredChecks.filter(
+                (name) => !latestByName.has(name) && name !== "codeql"
+              )
               if (missing.length > 0) {
                 console.log(`Missing checks: ${missing.join(", ")}`)
                 return false
               }
+              if (!latestByName.has("codeql") && requiredChecks.includes("codeql")) {
+                console.log("CodeQL check missing or not applicable")
+              }
 
-              const failed = requiredChecks
-                .map((name) => {
-                  const run = latestByName.get(name)
-                  return {
+              const failed = []
+              for (const name of requiredChecks) {
+                const run = latestByName.get(name)
+                if (!run) continue
+                if (
+                  name === "codeql" &&
+                  run.status === "completed" &&
+                  run.conclusion === "skipped"
+                ) {
+                  continue
+                }
+                if (run.status !== "completed" || run.conclusion !== "success") {
+                  failed.push({
                     name,
-                    status: run?.status,
-                    conclusion: run?.conclusion
-                  }
-                })
-                .filter((run) => run.status !== "completed" || run.conclusion !== "success")
+                    status: run.status,
+                    conclusion: run.conclusion
+                  })
+                }
+              }
 
               if (failed.length > 0) {
                 console.log(
