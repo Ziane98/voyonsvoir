@@ -3,9 +3,10 @@ name: Auto merge PRs
 on:
   workflow_run:
     workflows: ["Security Checks"]
-    types: [completed]
+    types: [requested, in_progress, completed]
 
 permissions:
+  actions: read
   checks: read
   contents: write
   issues: write
@@ -20,10 +21,10 @@ jobs:
           script: |
             const { owner, repo } = context.repo
             const run = context.payload.workflow_run
+            const action = context.payload.action
+            const runUrl = run.html_url
+            const runId = run.id
             const allowMerge = run.conclusion === "success"
-            if (!allowMerge) {
-              console.log(`Security checks conclusion: ${run.conclusion}`)
-            }
 
             const prs = run.pull_requests || []
             if (prs.length === 0) {
@@ -35,38 +36,63 @@ jobs:
             const requiredBaseChecks = ["gitleaks", "trivy", "clamav"]
             const requiredSameRepoChecks = ["codeql", "gitleaks", "trivy", "clamav"]
             const conflictMarker = "<!-- automerge-conflict -->"
+            const statusMarker = (stage) => `<!-- automerge-run:${runId}:${stage} -->`
+            const mergeMarker = (stage) => `<!-- automerge-merge:${runId}:${stage} -->`
 
             async function getPr(number) {
               return (await github.rest.pulls.get({ owner, repo, pull_number: number })).data
             }
 
-            async function hasConflictComment(number) {
+            async function listComments(number) {
               const { data } = await github.rest.issues.listComments({
                 owner,
                 repo,
                 issue_number: number,
                 per_page: 100
               })
-              return data.some((comment) => comment.body?.includes(conflictMarker))
+              return data
             }
 
-            async function postConflictComment(pr) {
-              if (await hasConflictComment(pr.number)) {
-                console.log(`Conflict comment already exists for PR #${pr.number}`)
-                return
+            async function commentOnce(number, marker, lines) {
+              const comments = await listComments(number)
+              if (comments.some((comment) => comment.body?.includes(marker))) {
+                console.log(`Comment already exists for PR #${number} (${marker})`)
+                return false
               }
-              const body = [
-                conflictMarker,
-                "FR: Cette PR a des conflits avec la branche cible. Merci de les resoudre puis de mettre a jour la PR.",
-                "EN: This PR has merge conflicts with the base branch. Please resolve them and update the PR."
-              ].join("\n")
+              const body = [marker, ...lines].join("\n")
               await github.rest.issues.createComment({
                 owner,
                 repo,
-                issue_number: pr.number,
+                issue_number: number,
                 body
               })
-              console.log(`Posted conflict comment on PR #${pr.number}`)
+              return true
+            }
+
+            async function postConflictComment(pr) {
+              const lines = [
+                "FR: Cette PR a des conflits avec la branche cible. Merci de les resoudre puis de mettre a jour la PR.",
+                "EN: This PR has merge conflicts with the base branch. Please resolve them and update the PR."
+              ]
+              const posted = await commentOnce(pr.number, conflictMarker, lines)
+              if (posted) {
+                console.log(`Posted conflict comment on PR #${pr.number}`)
+              }
+            }
+
+            async function getRunJobs(runId) {
+              const { data } = await github.rest.actions.listJobsForWorkflowRun({
+                owner,
+                repo,
+                run_id: runId,
+                per_page: 100
+              })
+              return data.jobs || []
+            }
+
+            function formatJobSummary(jobs) {
+              if (!jobs.length) return ["Jobs: none"]
+              return ["Jobs:", ...jobs.map((job) => `- ${job.name}: ${job.conclusion || job.status}`)]
             }
 
             async function checksPassed(sha, requiredChecks) {
@@ -176,15 +202,60 @@ jobs:
                   merge_method: "merge"
                 })
                 console.log(`Merged PR #${number}`)
+                await commentOnce(pr.number, mergeMarker("success"), [
+                  "FR: Merge automatique reussi.",
+                  "EN: Auto-merge succeeded."
+                ])
               } catch (error) {
                 if (error.status === 405 || error.status === 409) {
                   console.log(`Merge skipped for PR #${number}: ${error.message}`)
+                  await commentOnce(pr.number, mergeMarker("skipped"), [
+                    `FR: Merge automatique ignore (${error.message}).`,
+                    `EN: Auto-merge skipped (${error.message}).`
+                  ])
                   return
                 }
                 throw error
               }
             }
 
+            if (action === "requested" || action === "in_progress") {
+              const stage = action
+              const lines = [
+                `FR: Checks en cours (${stage}).`,
+                `EN: Checks are running (${stage}).`,
+                `Run: ${runUrl}`
+              ]
+              for (const pr of prs) {
+                await commentOnce(pr.number, statusMarker(stage), lines)
+              }
+              return
+            }
+
+            if (action !== "completed") {
+              console.log(`Unsupported action: ${action}`)
+              return
+            }
+
+            const jobs = await getRunJobs(runId)
+            const jobLines = formatJobSummary(jobs)
+            const conclusion = run.conclusion || "unknown"
+
+            const statusLines = allowMerge
+              ? [
+                  `FR: Checks termines avec succes. Tentative de merge automatique.`,
+                  `EN: Checks completed successfully. Attempting auto-merge.`,
+                  `Run: ${runUrl}`,
+                  ...jobLines
+                ]
+              : [
+                  `FR: Checks termines en echec (conclusion: ${conclusion}).`,
+                  `EN: Checks completed with failure (conclusion: ${conclusion}).`,
+                  `Run: ${runUrl}`,
+                  ...jobLines
+                ]
+
             for (const pr of prs) {
+              await commentOnce(pr.number, statusMarker(allowMerge ? "success" : "failure"), statusLines)
               await tryMerge(pr.number, allowMerge)
             }
