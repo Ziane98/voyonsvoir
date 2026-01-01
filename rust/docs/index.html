@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>IK Demo</title>
+</head>
+<body style="margin:0;overflow:hidden">
+  <canvas id="canvas"></canvas>
+  <script type="module">
+    const canvas = document.getElementById('canvas');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    import init from './pkg';
+    init();
+  </script>
+</body>
+</html>

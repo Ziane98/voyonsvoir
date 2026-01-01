@@ -1,0 +1,52 @@
+[package]
+name = "ik-webgpu"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name"]
+description = "FABRIK-based inverse kinematics library with WebGPU visualization"
+license = "MIT"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "ik-demo"
+path = "src/main.rs"
+
+[[example]]
+name = "animated_chain"
+path = "examples/animated_chain.rs"
+
+[dependencies]
+wgpu = "24"
+winit = "0.30"
+glam = "0.29"
+bytemuck = { version = "1", features = ["derive"] }
+log = "0.4"
+
+# Native dependencies
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = "0.4"
+env_logger = "0.11"
+egui = "0.31"
+egui-wgpu = "0.31"
+egui-winit = "0.31"
+
+# WASM dependencies
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+console_log = "1"
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+web-sys = { version = "0.3", features = [
+    "Document",
+    "Window",
+    "Element",
+    "HtmlCanvasElement",
+    "Performance",
+] }
+pollster = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
