@@ -37,7 +37,7 @@ Selon un nombre en entrée les regles, une chaîne de caractères doit être ren
 107 => FooBarQix (divisible par 3, 5 et 7)
 ```
 
-Je vous partage donc une implémentation avec Nginx uniquement est juste [ici](./division-regexp-foobarqix/foobarqix.conf).
+Je vous partage donc une implémentation avec Nginx uniquement est juste [ici](./division-regex-foobarqix/foobarqix.conf).
 
 Pour tester, utilisez le docker-compose, et faites une requete avec le nombre de votre choix : `curl localhost:3570/{NUMBER}`
 
