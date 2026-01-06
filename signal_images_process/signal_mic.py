@@ -23,7 +23,7 @@ fig, (ax_fft, ax_spec) = plt.subplots(2, 1, figsize=(10, 6))
 # ----- FFT -----
 freqs = np.fft.rfftfreq(blocksize, 1 / fs)
 fft_line, = ax_fft.plot(freqs, np.zeros_like(freqs))
-ax_fft.set_xlim(0, 5000)
+ax_fft.set_xlim(0, 20000)
 ax_fft.set_ylim(0, 0.05)
 ax_fft.set_title("FFT temps réel")
 ax_fft.set_xlabel("Fréquence (Hz)")
@@ -33,7 +33,7 @@ ax_fft.set_ylabel("Amplitude")
 ax_spec.set_title("Spectrogramme (specgram)")
 ax_spec.set_xlabel("Temps (s)")
 ax_spec.set_ylabel("Fréquence (Hz)")
-ax_spec.set_ylim(0, 5000)
+ax_spec.set_ylim(0, 20000)
 
 plt.tight_layout()
 
@@ -70,7 +70,7 @@ def update(frame):
         scale="dB"
     )
 
-    ax_spec.set_ylim(0, 1000)
+    ax_spec.set_ylim(0, 20000)
     ax_spec.set_ylabel("Fréquence (Hz)")
     ax_spec.set_xlabel("Temps (s)")
     ax_spec.set_title("Spectrogramme (specgram)")
